@@ -1,14 +1,20 @@
-from flask import Flask, request, jsonify, render_template, redirect, url_for
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session
+from flask_cors import CORS
 import requests
 import json
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all domains (or customize as needed)
+
+app.secret_key = "irshadali"  # Required for sessions
 
 GEMINI_API_KEY = "AIzaSyDLrIPX8L-dH1WWiXs7wCB_nKufkKJxGiY"
 
 @app.route('/submit', methods=['POST'])
 def submit():
-    data = request.form  # Assuming your form sends as form-data (not JSON)
+    # Get the JSON data from the request
+    data = request.get_json()  # This reads JSON data from the request body
+
     business_url = data.get('business_url')
     business_email = data.get('business_email')
     business_phone = data.get('business_phone')
@@ -25,9 +31,7 @@ def submit():
     # Send to Gemini
     report_data = send_to_gemini(prompt)
 
-    # Store report data in session (or pass to result route via query parameters if it's small enough)
-    # For simplicity, I will use session to pass data here
-    from flask import session
+    # Store report data in session
     session['report_data'] = report_data
 
     # Redirect to result page
@@ -36,7 +40,6 @@ def submit():
 @app.route('/result')
 def result():
     # Fetch the report data from session
-    from flask import session
     report_data = session.get('report_data', None)
     
     if report_data is None:
