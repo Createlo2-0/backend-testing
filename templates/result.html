@@ -3,49 +3,163 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audit Report</title>
+    <title>AI Audit Results - Createlo</title>
     <style>
+        :root {
+            --primary: #367df8;
+            --secondary: #4822dd;
+            --accent: #ff299c;
+            --dark: #07071f;
+            --light: #f0f8ff;
+        }
         body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f4f4;
-            padding: 20px;
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--dark);
+            color: white;
         }
-        .report-container {
-            background-color: #fff;
+        .container {
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 2rem;
+            background: rgba(7, 7, 31, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.1),
+                        inset 0 0 10px rgba(255, 0, 255, 0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .header h1 {
+            font-size: 2.5rem;
+            margin: 0;
+            background: linear-gradient(to right, cyan, var(--primary));
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+        }
+        .header h2 {
+            color: var(--primary);
+            margin-top: 0.5rem;
+        }
+        .score-container {
+            display: flex;
+            justify-content: space-around;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }
+        .score-box {
+            background: rgba(54, 125, 248, 0.1);
+            border: 1px solid var(--primary);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            width: 30%;
+            min-width: 150px;
+            margin: 0.5rem;
+            box-shadow: 0 0 15px rgba(54, 125, 248, 0.2);
+        }
+        .score-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            background: linear-gradient(to right, cyan, var(--accent));
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            margin: 0.5rem 0;
+        }
+        .section {
+            margin: 2rem 0;
+            padding: 1rem;
+            background: rgba(15, 23, 42, 0.5);
+            border-radius: 12px;
+            border-left: 4px solid var(--primary);
+        }
+        .section h3 {
+            color: var(--primary);
+            margin-top: 0;
+        }
+        .insight, .tip {
+            background: rgba(72, 34, 221, 0.1);
+            padding: 1rem;
+            margin: 1rem 0;
             border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            border-left: 3px solid var(--accent);
         }
-        h1 {
-            color: #333;
+        .footer {
+            text-align: center;
+            margin-top: 2rem;
+            color: #aaa;
+            font-size: 0.9rem;
         }
-        .report-section {
-            margin-bottom: 20px;
-        }
-        .report-section h3 {
-            color: #555;
-        }
-        .report-section p {
-            color: #666;
-            font-size: 1.1em;
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+                margin: 1rem;
+            }
+            .score-box {
+                width: 100%;
+            }
         }
     </style>
 </head>
 <body>
-
-    <div class="report-container">
-        <h1>Audit Report</h1>
-
-        <!-- Display Gemini report -->
-        <div class="report-section">
-            <h3>Audit Summary</h3>
-            <p>{{ report }}</p>
+    <div class="container">
+        <div class="header">
+            <h1>AI Audit Results</h1>
+            <h2>For {{ report_data.client }}</h2>
         </div>
 
-        <!-- You can add more sections here like Instagram/Facebook summaries -->
-        <!-- If you want to break down sections of the report -->
-        <!-- <div class="report-section"> ... </div> -->
-    </div>
+        <div class="section">
+            <h3>Business Overview</h3>
+            <p>{{ report_data.businessoverview }}</p>
+        </div>
 
+        <div class="score-container">
+            <div class="score-box">
+                <h3>Instagram</h3>
+                <div class="score-value">{{ report_data.instagramScore }}</div>
+                <p>{{ report_data.instagramSummary }}</p>
+            </div>
+            <div class="score-box">
+                <h3>Facebook</h3>
+                <div class="score-value">{{ report_data.facebookScore }}</div>
+                <p>{{ report_data.facebookSummary }}</p>
+            </div>
+            <div class="score-box">
+                <h3>Overall</h3>
+                <div class="score-value">{{ report_data.overallScore }}</div>
+                <p>Combined Performance Score</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>Summary</h3>
+            <p>{{ report_data.businesssummary }}</p>
+        </div>
+
+        <div class="section">
+            <h3>Key Insights</h3>
+            {% for insight in report_data.insights %}
+            <div class="insight">{{ insight }}</div>
+            {% endfor %}
+        </div>
+
+        <div class="section">
+            <h3>Actionable Tips</h3>
+            {% for tip in report_data.tips %}
+            <div class="tip">{{ tip }}</div>
+            {% endfor %}
+        </div>
+
+        <div class="footer">
+            <p>Powered by Gemini AI and Createlo</p>
+        </div>
+    </div>
 </body>
 </html>
