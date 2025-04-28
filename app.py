@@ -13,7 +13,7 @@ CORS(app,
      supports_credentials=True,
      resources={
          r"/*": {
-             "origins": ["https://audit.createlo.in/", "http://localhost:3000"],
+             "origins": ["https://audit.createlo.in", "http://localhost:3000"],
              "methods": ["GET", "POST", "OPTIONS"],
              "allow_headers": ["Content-Type", "Authorization"],
              "expose_headers": ["Content-Type"],
@@ -49,11 +49,11 @@ def submit():
         if not data:
             return jsonify({"error": "No data received"}), 400
 
-        required_fields = ['business_url', 'business_email', 'business_phone']
+        required_fields = ['business_url', 'business_email', 'business_phone', 'categoryHint']
         if not all(field in data for field in required_fields):
             return jsonify({"error": "Missing required fields"}), 400
 
-        prompt = build_prompt(data['business_url'], data['business_email'], data['business_phone'])
+        prompt = build_prompt(data['business_url'], data['business_email'], data['business_phone'], data['categoryHint'])
         gemini_response = send_to_gemini(prompt)
         
         if isinstance(gemini_response, str) and gemini_response.startswith("Error"):
@@ -65,7 +65,8 @@ def submit():
 
         response = jsonify({
             "redirect_url": "/result",
-            "message": "Analysis complete"
+            "message": "Analysis complete",
+            "report_data": report_data  # Include report data in the response
         })
         return _corsify_actual_response(response)
 
@@ -73,43 +74,40 @@ def submit():
         print("Error in submit:", str(e))
         return jsonify({"error": str(e)}), 500
 
-@app.route('/result')
-def result():
-    try:
-        report_data = session.get('report_data')
-        print("Session data retrieved:", report_data)
-        
-        if not report_data:
-            return render_template('error.html', 
-                                message="Session expired or no data found. Please submit the form again.")
-            
-        return render_template('result.html', report_data=report_data)
-    except Exception as e:
-        print("Error in result:", str(e))
-        return render_template('error.html', message=str(e))
-
 def _build_cors_preflight_response():
     response = jsonify({"message": "CORS preflight"})
-    response.headers.add("Access-Control-Allow-Origin", "https://universal-auditor-frontend.onrender.com")
+    response.headers.add("Access-Control-Allow-Origin", "https://audit.createlo.in")
     response.headers.add("Access-Control-Allow-Headers", "*")
     response.headers.add("Access-Control-Allow-Methods", "*")
     response.headers.add("Access-Control-Allow-Credentials", "true")
     return response
 
 def _corsify_actual_response(response):
-    response.headers.add("Access-Control-Allow-Origin", "https://universal-auditor-frontend.onrender.com")
+    response.headers.add("Access-Control-Allow-Origin", "https://audit.createlo.in")
     response.headers.add("Access-Control-Allow-Credentials", "true")
     return response
 
-def build_prompt(url, email, phone):
+def build_prompt(url, email, phone, category):
     return f"""
-    [Your existing prompt template...]
+    Analyze the business website at {url} with the following details:
+    - Contact Email: {email}
+    - Phone Number: {phone}
+    - Business Category: {category}
+    
+    Provide a comprehensive audit report including:
+    1. SEO analysis
+    2. Design evaluation
+    3. Performance metrics
+    4. Improvement suggestions
+    
+    Format the response as a JSON object with these sections.
     """
 
 def send_to_gemini(prompt):
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
-        response = requests.post(url, json={
+        headers = {'Content-Type': 'application/json'}
+        response = requests.post(url, headers=headers, json={
             "contents": [{
                 "parts": [{"text": prompt}]
             }]
