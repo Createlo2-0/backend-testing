@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # App configuration
-app.secret_key = os.environ.get('SECRET_KEY', 'default-secret-key-for-dev')
+app.secret_key = os.environ.get('SECRET_KEY', 'irshadali')
 app.config.update(
     SESSION_COOKIE_NAME='createlo_session',
     SESSION_COOKIE_SECURE=True,
@@ -39,7 +39,7 @@ CORS(app,
      })
 
 # API Keys
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'your-default-api-key')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyDLrIPX8L-dH1WWiXs7wCB_nKufkKJxGiY')
 
 @app.route('/')
 def home():
