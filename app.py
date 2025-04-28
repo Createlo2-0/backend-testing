@@ -6,14 +6,14 @@ import json
 from datetime import timedelta
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')
+app.secret_key = os.environ.get('SECRET_KEY', 'irshadali')
 
 # Configure CORS for your React app's domains
 CORS(app,
      supports_credentials=True,
      resources={
          r"/*": {
-             "origins": ["https://universal-auditor-frontend.onrender.com", "http://localhost:3000"],
+             "origins": ["https://audit.createlo.in/", "http://localhost:3000"],
              "methods": ["GET", "POST", "OPTIONS"],
              "allow_headers": ["Content-Type", "Authorization"],
              "expose_headers": ["Content-Type"],
@@ -31,7 +31,7 @@ app.config.update(
     SESSION_REFRESH_EACH_REQUEST=True
 )
 
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+GEMINI_API_KEY = os.environ.get('AIzaSyDLrIPX8L-dH1WWiXs7wCB_nKufkKJxGiY')
 
 @app.route('/')
 def home():
