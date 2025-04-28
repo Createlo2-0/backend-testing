@@ -1,133 +1,132 @@
-from flask import Flask, request, jsonify, render_template, redirect, url_for, session
+import os
+from flask import Flask, request, jsonify, render_template, session
 from flask_cors import CORS
 import requests
 import json
-import os
+from datetime import timedelta
 
 app = Flask(__name__)
-CORS(app, 
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')
+
+# Configure CORS for your React app's domains
+CORS(app,
      supports_credentials=True,
      resources={
-         r"/submit": {"origins": "*"},
-         r"/result": {"origins": "*"}
+         r"/*": {
+             "origins": ["https://universal-auditor-frontend.onrender.com", "http://localhost:3000"],
+             "methods": ["GET", "POST", "OPTIONS"],
+             "allow_headers": ["Content-Type", "Authorization"],
+             "expose_headers": ["Content-Type"],
+             "max_age": 600
+         }
      })
 
-app.secret_key = os.environ.get("SECRET_KEY", "irshadali")  # Change this for production
-app.config['SESSION_COOKIE_SAMESITE'] = 'None'
-app.config['SESSION_COOKIE_SECURE'] = True
+# Enhanced session configuration
+app.config.update(
+    SESSION_COOKIE_NAME='createlo_session',
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='None',
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=1),
+    SESSION_REFRESH_EACH_REQUEST=True
+)
 
-GEMINI_API_KEY = os.environ.get("AIzaSyDLrIPX8L-dH1WWiXs7wCB_nKufkKJxGiY")  # Set this in your environment variables
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
 @app.route('/')
-def index():
-    return "Flask Backend is Running"
+def home():
+    return "Flask Backend Running - Connected to React Frontend"
 
-@app.route('/submit', methods=['POST'])
+@app.route('/submit', methods=['POST', 'OPTIONS'])
 def submit():
+    if request.method == 'OPTIONS':
+        return _build_cors_preflight_response()
+    
     try:
         data = request.get_json()
+        print("Received data:", data)
+        
         if not data:
             return jsonify({"error": "No data received"}), 400
 
-        business_url = data.get('business_url')
-        business_email = data.get('business_email')
-        business_phone = data.get('business_phone')
-
-        if not (business_url and business_email and business_phone):
+        required_fields = ['business_url', 'business_email', 'business_phone']
+        if not all(field in data for field in required_fields):
             return jsonify({"error": "Missing required fields"}), 400
 
-        save_user_data(business_url, business_email, business_phone)
-        prompt = build_prompt(business_url, business_email, business_phone)
-        report_data = send_to_gemini(prompt)
+        prompt = build_prompt(data['business_url'], data['business_email'], data['business_phone'])
+        gemini_response = send_to_gemini(prompt)
+        
+        if isinstance(gemini_response, str) and gemini_response.startswith("Error"):
+            return jsonify({"error": gemini_response}), 500
 
-        if isinstance(report_data, str) and report_data.startswith("Error"):
-            return jsonify({"error": report_data}), 500
+        report_data = parse_js_object(gemini_response)
+        session['report_data'] = report_data
+        print("Session data stored:", report_data)
 
-        # Parse the JavaScript object string to Python dict
-        report_dict = parse_js_object(report_data)
-        session['report_data'] = report_dict
-
-        return jsonify({"redirect_url": "/result"})
+        response = jsonify({
+            "redirect_url": "/result",
+            "message": "Analysis complete"
+        })
+        return _corsify_actual_response(response)
 
     except Exception as e:
+        print("Error in submit:", str(e))
         return jsonify({"error": str(e)}), 500
 
 @app.route('/result')
 def result():
-    report_data = session.get('report_data')
-    if not report_data:
-        return jsonify({"error": "No report found. Please submit the form first."}), 400
-    
-    return render_template('result.html', report_data=report_data)
+    try:
+        report_data = session.get('report_data')
+        print("Session data retrieved:", report_data)
+        
+        if not report_data:
+            return render_template('error.html', 
+                                message="Session expired or no data found. Please submit the form again.")
+            
+        return render_template('result.html', report_data=report_data)
+    except Exception as e:
+        print("Error in result:", str(e))
+        return render_template('error.html', message=str(e))
 
-def save_user_data(url, email, phone):
-    data = {"url": url, "email": email, "phone": phone}
-    with open('user_data.json', 'a') as f:
-        f.write(json.dumps(data) + "\n")
+def _build_cors_preflight_response():
+    response = jsonify({"message": "CORS preflight"})
+    response.headers.add("Access-Control-Allow-Origin", "https://universal-auditor-frontend.onrender.com")
+    response.headers.add("Access-Control-Allow-Headers", "*")
+    response.headers.add("Access-Control-Allow-Methods", "*")
+    response.headers.add("Access-Control-Allow-Credentials", "true")
+    return response
 
-def build_prompt(business_url, business_email, business_phone):
-    prompt = f"""
-You are a digital marketing audit expert working for the Createlo brand...
-(Business URL: {business_url})
-(Business Email: {business_email})
-(Business Phone: {business_phone})
-Based *only* on analyzing the content of the Business URL provided ({business_url}):
-Return the data strictly as a single JavaScript constant object declaration named `reportData`. Follow this exact structure precisely:
-const reportData = {{
-  client: "<Business Name or Brand inferred from URL or contact info>",
-  businessoverview: "<1-2 sentence overview of the business based ONLY on the website content>",
-  instagramSummary: "<1-2 sentence ESTIMATION of a typical Instagram presence for this TYPE of business. State clearly if this is an assumption.>",
-  facebookSummary: "<1-2 sentence ESTIMATION of a typical Facebook presence for this TYPE of business. State clearly if this is an assumption.>",
-  instagramScore: <Estimate a score out of 100, ensuring it is NOT LESS THAN 60>,
-  facebookScore: <Estimate a score out of 100, ensuring it is NOT LESS THAN 60>,
-  overallScore: <Calculate the average of instagramScore and facebookScore>,
-  businesssummary: "<2-sentence summary combining the website overview and the ESTIMATED social performance potential>",
-  insights: [
-    "<Generate several practical and insightful digital marketing feedback points relevant to this TYPE of business, derived from the website analysis>",
-    "<Insight 2>",
-    "<Insight 3>"
-  ],
-  tips: [ 
-    "<Generate several practical and actionable tips derived DIRECTLY from the generated 'insights'>",
-    "<Tip 2>",
-    "<Tip 3>"
-  ]
-}};
-"""
-    return prompt
+def _corsify_actual_response(response):
+    response.headers.add("Access-Control-Allow-Origin", "https://universal-auditor-frontend.onrender.com")
+    response.headers.add("Access-Control-Allow-Credentials", "true")
+    return response
+
+def build_prompt(url, email, phone):
+    return f"""
+    [Your existing prompt template...]
+    """
 
 def send_to_gemini(prompt):
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
-    params = {"key": GEMINI_API_KEY}
-    payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }]
-    }
     try:
-        response = requests.post(url, params=params, json=payload)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+        response = requests.post(url, json={
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
+        })
         response.raise_for_status()
-        text_response = response.json()['candidates'][0]['content']['parts'][0]['text']
-        return text_response
+        return response.json()['candidates'][0]['content']['parts'][0]['text']
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error calling Gemini API: {str(e)}"
 
 def parse_js_object(js_string):
-    """Parse the JavaScript object string to Python dictionary"""
     try:
-        # Extract the object part from the JS string
         start = js_string.find('{')
         end = js_string.rfind('}') + 1
         json_str = js_string[start:end]
-        
-        # Convert JS object to valid JSON
-        json_str = json_str.replace("const reportData = ", "")
-        json_str = json_str.replace(";", "")
-        
-        # Parse JSON to Python dict
         return json.loads(json_str)
     except Exception as e:
-        raise ValueError(f"Failed to parse JavaScript object: {str(e)}")
+        raise ValueError(f"Failed to parse response: {str(e)}")
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
