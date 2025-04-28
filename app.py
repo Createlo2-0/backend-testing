@@ -2,70 +2,70 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 from flask_cors import CORS
 import requests
 import json
+import os
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True)  # Allow cross-origin requests from the frontend
+CORS(app, 
+     supports_credentials=True,
+     resources={
+         r"/submit": {"origins": "*"},
+         r"/result": {"origins": "*"}
+     })
 
-app.secret_key = "irshadali"  # For session management
+app.secret_key = os.environ.get("SECRET_KEY", "irshadali")  # Change this for production
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['SESSION_COOKIE_SECURE'] = True
 
-GEMINI_API_KEY = "AIzaSyDLrIPX8L-dH1WWiXs7wCB_nKufkKJxGiY"  # Your Gemini API key
+GEMINI_API_KEY = os.environ.get("AIzaSyDLrIPX8L-dH1WWiXs7wCB_nKufkKJxGiY")  # Set this in your environment variables
 
-# ======================== ROUTES ========================
+@app.route('/')
+def index():
+    return "Flask Backend is Running"
 
 @app.route('/submit', methods=['POST'])
 def submit():
-    # Print the incoming data for debugging
-    data = request.get_json()
-    print("Received data:", data)  # This will print the received JSON data in the server logs
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data received"}), 400
 
-    # Extract required fields from the received data
-    business_url = data.get('business_url')
-    business_email = data.get('business_email')
-    business_phone = data.get('business_phone')
+        business_url = data.get('business_url')
+        business_email = data.get('business_email')
+        business_phone = data.get('business_phone')
 
-    # Check if any required field is missing
-    if not (business_url and business_email and business_phone):
-        return jsonify({"error": "Missing required fields"}), 400
+        if not (business_url and business_email and business_phone):
+            return jsonify({"error": "Missing required fields"}), 400
 
-    # Save user data (this can be expanded to save in a database if needed)
-    save_user_data(business_url, business_email, business_phone)
+        save_user_data(business_url, business_email, business_phone)
+        prompt = build_prompt(business_url, business_email, business_phone)
+        report_data = send_to_gemini(prompt)
 
-    # Build the prompt based on the received data
-    prompt = build_prompt(business_url, business_email, business_phone)
+        if isinstance(report_data, str) and report_data.startswith("Error"):
+            return jsonify({"error": report_data}), 500
 
-    # Send the prompt to the Gemini API and retrieve the result
-    report_data = send_to_gemini(prompt)
+        # Parse the JavaScript object string to Python dict
+        report_dict = parse_js_object(report_data)
+        session['report_data'] = report_dict
 
-    if isinstance(report_data, str) and report_data.startswith("Error"):
-        return jsonify({"error": report_data}), 500  # In case of Gemini API failure
+        return jsonify({"redirect_url": "/result"})
 
-    # Save the report data in session
-    session['report_data'] = report_data
-
-    # Return redirect_url to the frontend (React handles the actual redirect)
-    return jsonify({"redirect_url": "/result"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/result')
 def result():
-    # Fetch the report data from session
     report_data = session.get('report_data')
-
-    if report_data is None:
+    if not report_data:
         return jsonify({"error": "No report found. Please submit the form first."}), 400
-
-    # Directly return the report data to be used in React (for rendering the result page)
-    return jsonify({"report": report_data})
-
-# ======================== HELPER FUNCTIONS ========================
+    
+    return render_template('result.html', report_data=report_data)
 
 def save_user_data(url, email, phone):
-    # Save the data to a JSON file (can be expanded to a database in a real-world scenario)
     data = {"url": url, "email": email, "phone": phone}
     with open('user_data.json', 'a') as f:
         f.write(json.dumps(data) + "\n")
 
 def build_prompt(business_url, business_email, business_phone):
-    # Build the prompt for Gemini API based on received data
     prompt = f"""
 You are a digital marketing audit expert working for the Createlo brand...
 (Business URL: {business_url})
@@ -97,32 +97,37 @@ const reportData = {{
     return prompt
 
 def send_to_gemini(prompt):
-    # Send the prompt to Gemini API and get the result
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {GEMINI_API_KEY}"
-    }
+    params = {"key": GEMINI_API_KEY}
     payload = {
-        "contents": [
-            {
-                "parts": [{"text": prompt}]
-            }
-        ]
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
     }
     try:
-        response = requests.post(url, headers=headers, json=payload)
-
-        if response.status_code != 200:
-            return "Error: Gemini API call failed"
-
-        result = response.json()
-        text_response = result['candidates'][0]['content']['parts'][0]['text']
+        response = requests.post(url, params=params, json=payload)
+        response.raise_for_status()
+        text_response = response.json()['candidates'][0]['content']['parts'][0]['text']
         return text_response
     except Exception as e:
         return f"Error: {str(e)}"
 
-# ======================== MAIN ========================
+def parse_js_object(js_string):
+    """Parse the JavaScript object string to Python dictionary"""
+    try:
+        # Extract the object part from the JS string
+        start = js_string.find('{')
+        end = js_string.rfind('}') + 1
+        json_str = js_string[start:end]
+        
+        # Convert JS object to valid JSON
+        json_str = json_str.replace("const reportData = ", "")
+        json_str = json_str.replace(";", "")
+        
+        # Parse JSON to Python dict
+        return json.loads(json_str)
+    except Exception as e:
+        raise ValueError(f"Failed to parse JavaScript object: {str(e)}")
 
 if __name__ == '__main__':
     app.run(debug=True)
