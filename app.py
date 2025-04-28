@@ -4,16 +4,17 @@ import requests
 import json
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all domains (or customize as needed)
+CORS(app, supports_credentials=True)  # Important to allow sessions with React
 
-app.secret_key = "irshadali"  # Required for sessions
+app.secret_key = "irshadali"  # For session management
 
-GEMINI_API_KEY = "AIzaSyDLrIPX8L-dH1WWiXs7wCB_nKufkKJxGiY"
+GEMINI_API_KEY = "AIzaSyDLrIPX8L-dH1WWiXs7wCB_nKufkKJxGiY"  # Your API key
+
+# ======================== ROUTES ========================
 
 @app.route('/submit', methods=['POST'])
 def submit():
-    # Get the JSON data from the request
-    data = request.get_json()  # This reads JSON data from the request body
+    data = request.get_json()
 
     business_url = data.get('business_url')
     business_email = data.get('business_email')
@@ -22,31 +23,28 @@ def submit():
     if not (business_url and business_email and business_phone):
         return jsonify({"error": "Missing required fields"}), 400
 
-    # Save user data
     save_user_data(business_url, business_email, business_phone)
 
-    # Build Gemini Prompt
     prompt = build_prompt(business_url, business_email, business_phone)
 
-    # Send to Gemini
     report_data = send_to_gemini(prompt)
 
-    # Store report data in session
     session['report_data'] = report_data
 
-    # Redirect to result page
-    return redirect(url_for('result'))
+    # Instead of redirecting immediately (browser can't handle Flask redirect after fetch),
+    # Tell React to redirect user manually.
+    return jsonify({"redirect_url": "/result"})
 
 @app.route('/result')
 def result():
-    # Fetch the report data from session
-    report_data = session.get('report_data', None)
-    
+    report_data = session.get('report_data')
+
     if report_data is None:
         return "No report found. Please submit the form first.", 400
-    
-    # Render result.html and pass the report_data
+
     return render_template('result.html', report=report_data)
+
+# ======================== HELPER FUNCTIONS ========================
 
 def save_user_data(url, email, phone):
     data = {"url": url, "email": email, "phone": phone}
@@ -76,14 +74,11 @@ const reportData = {{
     "<Generate several practical and insightful digital marketing feedback points relevant to this TYPE of business, derived from the website analysis>",
     "<Insight 2>",
     "<Insight 3>"
-    // Do not limit the number of insights
   ],
   tips: [ 
-    // **CRITICAL: Generate tips based on insights, integrating Createlo CTAs.**
-    "<Generate several practical and actionable tips derived DIRECTLY from the generated 'insights'. Each tip should identify a specific area for improvement or opportunity related to their online presence (as inferred from the website) and suggest a relevant action. FRAME these tips to naturally lead into recommending a Createlo service (like booking a call, requesting an audit/quote, starting a test campaign) as the solution or next step. Maintain a professional, encouraging, yet action-oriented tone. See examples below.>",
+    "<Generate several practical and actionable tips derived DIRECTLY from the generated 'insights'. Each tip should identify a specific area for improvement or opportunity related to their online presence (as inferred from the website) and suggest a relevant action. FRAME these tips to naturally lead into recommending a Createlo service (like booking a call, requesting an audit/quote, starting a test campaign) as the solution or next step. Maintain a professional, encouraging, yet action-oriented tone.>",
     "<Tip 2>",
     "<Tip 3>"
-    // Do not limit the number of tips. Ensure tips directly relate to the insights.
   ]
 }};
 
@@ -108,7 +103,6 @@ const reportData = {{
 """
     return prompt
 
-
 def send_to_gemini(prompt):
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
     headers = {
@@ -123,9 +117,15 @@ def send_to_gemini(prompt):
         ]
     }
     response = requests.post(url, headers=headers, json=payload)
+
+    if response.status_code != 200:
+        return "Error: Gemini API call failed"
+
     result = response.json()
     text_response = result['candidates'][0]['content']['parts'][0]['text']
     return text_response
+
+# ======================== MAIN ========================
 
 if __name__ == '__main__':
     app.run(debug=True)
