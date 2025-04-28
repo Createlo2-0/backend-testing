@@ -14,44 +14,64 @@ GEMINI_API_KEY = "AIzaSyDLrIPX8L-dH1WWiXs7wCB_nKufkKJxGiY"  # Your API key
 
 @app.route('/submit', methods=['POST'])
 def submit():
+    # Get data from the POST request
     data = request.get_json()
+
+    # Log the received data to check if it's coming in correctly
+    print("Received Data:", data)
 
     business_url = data.get('business_url')
     business_email = data.get('business_email')
     business_phone = data.get('business_phone')
 
+    # Check if the required fields are missing
     if not (business_url and business_email and business_phone):
         return jsonify({"error": "Missing required fields"}), 400
 
+    # Save user data (this can be expanded to save in a database if needed)
     save_user_data(business_url, business_email, business_phone)
 
+    # Build prompt to send to Gemini API
     prompt = build_prompt(business_url, business_email, business_phone)
 
+    # Send the prompt to Gemini API and retrieve the result
     report_data = send_to_gemini(prompt)
 
+    # If there was an error with the Gemini API, return error
+    if isinstance(report_data, str) and report_data.startswith("Error"):
+        return jsonify({"error": report_data}), 500  # In case of Gemini API failure
+
+    # Save report data in session
     session['report_data'] = report_data
 
-    # Instead of redirecting immediately (browser can't handle Flask redirect after fetch),
-    # Tell React to redirect user manually.
-    return jsonify({"redirect_url": "/result"})
+    # Log to verify if we are returning the correct response
+    print("Redirecting to result page...")
+
+    # Return the redirect URL to the frontend
+    return jsonify({"redirect_url": "/result"})  # This is correct for React to handle redirection
 
 @app.route('/result')
 def result():
+    # Get the report data from the session
     report_data = session.get('report_data')
 
+    # If no report data is found, show an error
     if report_data is None:
         return "No report found. Please submit the form first.", 400
 
+    # Render the result page with the report data
     return render_template('result.html', report=report_data)
 
 # ======================== HELPER FUNCTIONS ========================
 
 def save_user_data(url, email, phone):
+    # Save the user data into a file (this can be replaced with a database)
     data = {"url": url, "email": email, "phone": phone}
     with open('user_data.json', 'a') as f:
         f.write(json.dumps(data) + "\n")
 
 def build_prompt(business_url, business_email, business_phone):
+    # Build the prompt for the Gemini API based on the user's input
     prompt = f"""
 You are a digital marketing audit expert working for the Createlo brand...
 (Business URL: {business_url})
@@ -80,7 +100,7 @@ const reportData = {{
     "<Tip 2>",
     "<Tip 3>"
   ]
-}};
+}}};
 
 **Guidance for Generating 'tips':**
 
@@ -104,6 +124,7 @@ const reportData = {{
     return prompt
 
 def send_to_gemini(prompt):
+    # Send the prompt to the Gemini API to get the result
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
     headers = {
         "Content-Type": "application/json",
@@ -118,9 +139,11 @@ def send_to_gemini(prompt):
     }
     response = requests.post(url, headers=headers, json=payload)
 
+    # If the response status is not 200, return an error
     if response.status_code != 200:
         return "Error: Gemini API call failed"
 
+    # Extract and return the response content
     result = response.json()
     text_response = result['candidates'][0]['content']['parts'][0]['text']
     return text_response
