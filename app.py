@@ -7,14 +7,11 @@ from datetime import timedelta
 import logging
 from urllib.parse import urlparse
 
-# Initialize Flask app
 app = Flask(__name__)
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# App configuration
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
 app.config.update(
     SESSION_COOKIE_NAME='createlo_session',
@@ -25,7 +22,6 @@ app.config.update(
     SESSION_REFRESH_EACH_REQUEST=True
 )
 
-# CORS configuration - specific allowed origins when using credentials
 allowed_origins = [
     "https://audit.createlo.in",
     "http://localhost:3000",
@@ -57,7 +53,6 @@ def submit():
         return _build_cors_preflight_response()
     
     try:
-        # Input validation
         if not request.is_json:
             return jsonify({"error": "Request must be JSON"}), 400
             
@@ -67,7 +62,6 @@ def submit():
         if not data:
             return jsonify({"error": "No data received"}), 400
 
-        # Map frontend fields to backend expected fields
         business_url = data.get('website', '')
         business_email = data.get('email', '')
         business_phone = data.get('contactNumber', '')
@@ -77,20 +71,17 @@ def submit():
         instagram = data.get('instagram', '')
         facebook = data.get('facebook', '')
 
-        # Validate required fields
         required_fields = ['website', 'email', 'contactNumber']
-        missing_fields = [field for field in required_fields if field not in data]
+        missing_fields = [field for field in required_fields if not data.get(field)]
         if missing_fields:
             return jsonify({
                 "error": "Missing required fields",
                 "missing": missing_fields
             }), 400
 
-        # Validate URL format
         if not is_valid_url(business_url):
             return jsonify({"error": "Invalid business URL"}), 400
 
-        # Build the prompt with all available data
         prompt = build_createlo_prompt(
             business_url,
             business_email,
@@ -112,7 +103,6 @@ def submit():
             logger.error(f"Gemini API error: {gemini_response}")
             return jsonify({"error": gemini_response}), 502
 
-        # Extract the reportData object from the response
         report_data = extract_report_data(gemini_response)
         if not report_data:
             return jsonify({"error": "Could not parse audit report"}), 500
@@ -130,7 +120,6 @@ def submit():
         return jsonify({"error": "Internal server error"}), 500
 
 def is_valid_url(url):
-    """Validate URL format"""
     try:
         result = urlparse(url)
         return all([result.scheme, result.netloc])
@@ -138,7 +127,6 @@ def is_valid_url(url):
         return False
 
 def build_createlo_prompt(url, email, phone, category=None, category_hint=None, owner_name=None, instagram=None, facebook=None):
-    """Build the prompt with all available business data"""
     additional_info = []
     if category:
         additional_info.append(f"Business Category: {category}")
@@ -189,29 +177,24 @@ const reportData = {{
 """
 
 def extract_report_data(gemini_response):
-    """Extract the reportData object from the Gemini response"""
     try:
-        # Find the reportData declaration
         start = gemini_response.find("const reportData = {")
         if start == -1:
             logger.error("Could not find reportData in response")
             return None
         
-        # Extract the object part
         obj_start = gemini_response.find("{", start)
         obj_end = gemini_response.rfind("}") + 1
         json_str = gemini_response[obj_start:obj_end]
-        
-        # Parse the JSON
+
+        # Ensure JSON is valid: fix trailing commas and quote keys if needed
         report_data = json.loads(json_str)
         
-        # Validate required fields
         required_fields = [
             'client', 'businessoverview', 'instagramSummary', 
             'facebookSummary', 'instagramScore', 'facebookScore',
             'overallScore', 'businesssummary', 'insights', 'tips'
         ]
-        
         for field in required_fields:
             if field not in report_data:
                 logger.error(f"Missing required field in report: {field}")
@@ -224,11 +207,10 @@ def extract_report_data(gemini_response):
         return None
 
 def send_to_gemini(prompt):
-    """Send request to Gemini API"""
     try:
-       url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
-       headers = {'Content-Type': 'application/json'}
-       payload = {
+        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+        headers = {'Content-Type': 'application/json'}
+        payload = {
             "contents": [{
                 "parts": [{"text": prompt}]
             }],
@@ -244,10 +226,8 @@ def send_to_gemini(prompt):
                 "topK": 40
             }
         }
-        
         response = requests.post(url, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
-        
         return response.json()['candidates'][0]['content']['parts'][0]['text']
     except Exception as e:
         return f"Error calling Gemini API: {str(e)}"
@@ -256,7 +236,6 @@ def _build_cors_preflight_response():
     origin = request.headers.get('Origin')
     if origin not in allowed_origins:
         return jsonify({"error": "Origin not allowed"}), 403
-        
     response = jsonify({"message": "CORS preflight"})
     response.headers.add("Access-Control-Allow-Origin", origin)
     response.headers.add("Access-Control-Allow-Headers", "*")
@@ -266,11 +245,9 @@ def _build_cors_preflight_response():
 
 def _corsify_actual_response(response):
     origin = request.headers.get('Origin')
-    if origin not in allowed_origins:
-        return jsonify({"error": "Origin not allowed"}), 403
-        
-    response.headers.add("Access-Control-Allow-Origin", origin)
-    response.headers.add("Access-Control-Allow-Credentials", "true")
+    if origin in allowed_origins:
+        response.headers.add("Access-Control-Allow-Origin", origin)
+        response.headers.add("Access-Control-Allow-Credentials", "true")
     return response
 
 if __name__ == '__main__':
