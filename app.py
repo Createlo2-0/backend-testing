@@ -178,47 +178,48 @@ const reportData = {{
 
 def extract_report_data(gemini_response):
     try:
+        logger.debug("Extracting reportData from Gemini response...")
+        logger.debug(f"Raw Gemini text:\n{gemini_response}")
+
         start = gemini_response.find("const reportData = {")
         if start == -1:
-            logger.error("Could not find reportData in response")
+            logger.error("Could not find 'const reportData =' in Gemini response.")
             return None
-        
+
         obj_start = gemini_response.find("{", start)
         obj_end = gemini_response.rfind("}") + 1
         json_str = gemini_response[obj_start:obj_end]
 
-        # Ensure JSON is valid: fix trailing commas and quote keys if needed
+        logger.debug(f"Extracted JSON string:\n{json_str}")
+
         report_data = json.loads(json_str)
-        
+
         required_fields = [
-            'client', 'businessoverview', 'instagramSummary', 
+            'client', 'businessoverview', 'instagramSummary',
             'facebookSummary', 'instagramScore', 'facebookScore',
             'overallScore', 'businesssummary', 'insights', 'tips'
         ]
+
         for field in required_fields:
             if field not in report_data:
                 logger.error(f"Missing required field in report: {field}")
                 return None
-                
+
         return report_data
-        
+
     except Exception as e:
-        logger.error(f"Error extracting report data: {str(e)}")
+        logger.error(f"Error extracting report data: {str(e)}", exc_info=True)
         return None
+
 
 def send_to_gemini(prompt):
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key={GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
         payload = {
-            "contents": [{
-                "parts": [{"text": prompt}]
-            }],
+            "contents": [ { "parts": [ { "text": prompt } ] } ],
             "safetySettings": [
-                {
-                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                    "threshold": "BLOCK_ONLY_HIGH"
-                }
+                { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH" }
             ],
             "generationConfig": {
                 "temperature": 0.7,
@@ -226,11 +227,21 @@ def send_to_gemini(prompt):
                 "topK": 40
             }
         }
+
+        logger.info("Sending prompt to Gemini API...")
+        logger.debug("Prompt:\n" + prompt)
+
         response = requests.post(url, headers=headers, json=payload, timeout=30)
+        logger.info(f"Gemini API status code: {response.status_code}")
+        logger.debug(f"Gemini API raw response: {response.text}")
+
         response.raise_for_status()
         return response.json()['candidates'][0]['content']['parts'][0]['text']
+
     except Exception as e:
+        logger.error("Error during Gemini API call", exc_info=True)
         return f"Error calling Gemini API: {str(e)}"
+
 
 def _build_cors_preflight_response():
     origin = request.headers.get('Origin')
