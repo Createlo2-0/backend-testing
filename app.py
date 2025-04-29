@@ -45,7 +45,7 @@ CORS(app,
          }
      })
 
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyDLrIPX8L-dH1WWiXs7wCB_nKufkKJxGiY')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyBjeIvNr_EYX5p8K71un6iP5RAZvaH1aPE')
 
 @app.route('/')
 def home():
@@ -226,7 +226,7 @@ def extract_report_data(gemini_response):
 def send_to_gemini(prompt):
     """Send request to Gemini API"""
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+       url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
         payload = {
             "contents": [{
