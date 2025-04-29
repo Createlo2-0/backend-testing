@@ -1,3 +1,4 @@
+import re
 import os
 from flask import Flask, request, jsonify, session
 from flask_cors import CORS
@@ -181,18 +182,23 @@ def extract_report_data(gemini_response):
         logger.debug("Extracting reportData from Gemini response...")
         logger.debug(f"Raw Gemini text:\n{gemini_response}")
 
-        start = gemini_response.find("const reportData = {")
-        if start == -1:
-            logger.error("Could not find 'const reportData =' in Gemini response.")
-            return None
+         # Extract JavaScript-style object using regex and fix single quotes if any
+         match = re.search(r"const reportData\s*=\s*(\{.*?\});?", gemini_response, re.DOTALL)
+     if not match:
+           logger.error("Could not find reportData object in Gemini response")
+         return None
 
-        obj_start = gemini_response.find("{", start)
-        obj_end = gemini_response.rfind("}") + 1
-        json_str = gemini_response[obj_start:obj_end]
+    js_object = match.group(1)
 
-        logger.debug(f"Extracted JSON string:\n{json_str}")
+     # Optional cleanup (if Gemini returns trailing commas or single quotes)
+    js_object_clean = js_object.replace("'", '"')  # replace single quotes with double
+    js_object_clean = re.sub(r",\s*}", "}", js_object_clean)  # remove trailing commas in object
+    js_object_clean = re.sub(r",\s*]", "]", js_object_clean)  # remove trailing commas in array
 
-        report_data = json.loads(json_str)
+    logger.debug(f"Cleaned JSON string:\n{js_object_clean}")
+
+      # Try loading the cleaned string as JSON
+     report_data = json.loads(js_object_clean)
 
         required_fields = [
             'client', 'businessoverview', 'instagramSummary',
