@@ -182,23 +182,35 @@ def extract_report_data(gemini_response):
         logger.debug("Extracting reportData from Gemini response...")
         logger.debug(f"Raw Gemini text:\n{gemini_response}")
 
-        # Extract JavaScript-style object using regex and fix single quotes if any
-        match = re.search(r"const reportData\s*=\s*(\{.*?\});?", gemini_response, re.DOTALL)
+        # Extract JavaScript-style object using more robust regex
+        match = re.search(
+            r"const reportData\s*=\s*({.*?});?\s*$", 
+            gemini_response, 
+            re.DOTALL
+        )
         if not match:
             logger.error("Could not find reportData object in Gemini response")
             return None
 
         js_object = match.group(1)
-
-        # Optional cleanup (if Gemini returns trailing commas or single quotes)
-        js_object_clean = js_object.replace("'", '"')  # replace single quotes with double
-        js_object_clean = re.sub(r",\s*}", "}", js_object_clean)  # remove trailing commas in object
-        js_object_clean = re.sub(r",\s*]", "]", js_object_clean)  # remove trailing commas in array
-
+        
+        # More comprehensive cleaning
+        js_object_clean = js_object.strip()
+        js_object_clean = re.sub(r"//.*?\n", "", js_object_clean)  # Remove JS comments
+        js_object_clean = re.sub(r"/\*.*?\*/", "", js_object_clean, flags=re.DOTALL)  # Remove block comments
+        js_object_clean = js_object_clean.replace("'", '"')  # Replace single quotes
+        js_object_clean = re.sub(r",\s*([}\]])", r"\1", js_object_clean)  # Remove trailing commas
+        js_object_clean = re.sub(r"(\w+)\s*:", r'"\1":', js_object_clean)  # Quote property names
+        
         logger.debug(f"Cleaned JSON string:\n{js_object_clean}")
 
-        # Try loading the cleaned string as JSON
-        report_data = json.loads(js_object_clean)
+        # Try parsing with more helpful error reporting
+        try:
+            report_data = json.loads(js_object_clean)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error at position {e.pos}: {e.msg}")
+            logger.error(f"Problematic text: {js_object_clean[max(0,e.pos-20):e.pos+20]}")
+            return None
 
         required_fields = [
             'client', 'businessoverview', 'instagramSummary',
