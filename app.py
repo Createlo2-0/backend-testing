@@ -1,73 +1,147 @@
 import os
-import json
-import logging
-import re
-from urllib.parse import urlparse
-from datetime import timedelta
-
-import requests
-import json5
 from flask import Flask, request, jsonify, session
 from flask_cors import CORS
+import requests
+import json
+from datetime import timedelta
+import logging
+from urllib.parse import urlparse
 
-# ─── App & Logging Setup ────────────────────────────────────────────────
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24))
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("createlo-audit")
+logger = logging.getLogger(__name__)
 
-# ─── Session Settings ───────────────────────────────────────────────────
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
 app.config.update(
-    SESSION_COOKIE_NAME="createlo_session",
+    SESSION_COOKIE_NAME='createlo_session',
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SAMESITE='Lax',
     PERMANENT_SESSION_LIFETIME=timedelta(hours=1),
+    SESSION_REFRESH_EACH_REQUEST=True
 )
 
-# ─── CORS ───────────────────────────────────────────────────────────────
-CORS(
-    app,
-    supports_credentials=True,
-    origins=["https://audit.createlo.in", "http://localhost:3000"],
-    allow_headers=["Content-Type", "Authorization"],
-    methods=["GET", "POST", "OPTIONS"],
-)
+allowed_origins = [
+    "https://audit.createlo.in",
+    "http://localhost:3000",
+    "http://localhost:3000/audit-form",
+    "http://localhost:3000/business-summary"
+]
 
-# ─── Gemini Key ─────────────────────────────────────────────────────────
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")  # Ensure this key is correctly set in env
-if not GEMINI_API_KEY:
-    logger.warning("GEMINI_API_KEY is not set; /submit will return 503.")
+CORS(app,
+     supports_credentials=True,
+     resources={
+         r"/*": {
+             "origins": allowed_origins,
+             "methods": ["GET", "POST", "OPTIONS"],
+             "allow_headers": ["Content-Type", "Authorization"],
+             "expose_headers": ["Content-Type"],
+             "max_age": 600
+         }
+     })
 
-# ─── Utility Validators ─────────────────────────────────────────────────
-def is_valid_url(url: str) -> bool:
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyBjeIvNr_EYX5p8K71un6iP5RAZvaH1aPE')
+
+@app.route('/')
+def home():
+    return jsonify({"status": "active", "service": "Createlo Audit API"})
+
+@app.route('/submit', methods=['POST', 'OPTIONS'])
+def submit():
+    if request.method == 'OPTIONS':
+        return _build_cors_preflight_response()
+    
     try:
-        p = urlparse(url)
-        return bool(p.scheme and p.netloc)
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+            
+        data = request.get_json()
+        logger.info(f"Received request with data: {data}")
+        
+        if not data:
+            return jsonify({"error": "No data received"}), 400
+
+        business_url = data.get('website', '')
+        business_email = data.get('email', '')
+        business_phone = data.get('contactNumber', '')
+        business_category = data.get('businessCategory', '')
+        category_hint = data.get('categoryHint', '')
+        owner_name = data.get('ownerName', '')
+        instagram = data.get('instagram', '')
+        facebook = data.get('facebook', '')
+
+        required_fields = ['website', 'email', 'contactNumber']
+        missing_fields = [field for field in required_fields if not data.get(field)]
+        if missing_fields:
+            return jsonify({
+                "error": "Missing required fields",
+                "missing": missing_fields
+            }), 400
+
+        if not is_valid_url(business_url):
+            return jsonify({"error": "Invalid business URL"}), 400
+
+        prompt = build_createlo_prompt(
+            business_url,
+            business_email,
+            business_phone,
+            business_category,
+            category_hint,
+            owner_name,
+            instagram,
+            facebook
+        )
+        
+        if not GEMINI_API_KEY:
+            return jsonify({"error": "API service unavailable"}), 503
+            
+        logger.info("Sending request to Gemini API")
+        gemini_response = send_to_gemini(prompt)
+        
+        if isinstance(gemini_response, str) and gemini_response.startswith("Error"):
+            logger.error(f"Gemini API error: {gemini_response}")
+            return jsonify({"error": gemini_response}), 502
+
+        report_data = extract_report_data(gemini_response)
+        if not report_data:
+            return jsonify({"error": "Could not parse audit report"}), 500
+
+        session['report_data'] = report_data
+        logger.info("Successfully generated audit report")
+
+        return _corsify_actual_response(jsonify({
+            "status": "success",
+            "data": report_data
+        }))
+
+    except Exception as e:
+        logger.error(f"Error in submit: {str(e)}", exc_info=True)
+        return jsonify({"error": "Internal server error"}), 500
+
+def is_valid_url(url):
+    try:
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
     except:
         return False
 
-# ─── Prompt Builder ─────────────────────────────────────────────────────
-def build_prompt(data: dict) -> str:
-    lines = [
-        f"Business URL: {data['website']}",
-        f"Contact Email: {data['email']}",
-        f"Contact Phone: {data['contactNumber']}"
-    ]
-    for k in ("businessCategory", "categoryHint", "ownerName", "instagram", "facebook"):
-        if data.get(k):
-            pretty = k.replace("business", "Business ").title()
-            lines.append(f"{pretty}: {data[k]}")
-
-    additional_info_str = "\n".join(lines)
-    url = data['website']
-    email = data['email']
-    phone = data['contactNumber']
-
+def build_createlo_prompt(url, email, phone, category=None, category_hint=None, owner_name=None, instagram=None, facebook=None):
+    additional_info = []
+    if category:
+        additional_info.append(f"Business Category: {category}")
+    if category_hint:
+        additional_info.append(f"Category Hint: {category_hint}")
+    if owner_name:
+        additional_info.append(f"Owner Name: {owner_name}")
+    if instagram:
+        additional_info.append(f"Instagram Handle: {instagram}")
+    if facebook:
+        additional_info.append(f"Facebook Page: {facebook}")
+        
+    additional_info_str = "\n".join(additional_info) + "\n" if additional_info else ""
+    
     return f"""
-You are a digital‐marketing audit expert for Createlo.
-Use ONLY the info below—no guesses—to produce a single JS constant `reportData`.
 You are a digital marketing audit expert working for the Createlo brand. Your goal is to analyze a business's website and provide insights and actionable next steps that highlight opportunities and encourage engagement with Createlo's services.
 
 I have the following business data:
@@ -102,66 +176,80 @@ const reportData = {{
 }};
 """
 
-# ─── Gemini Caller ──────────────────────────────────────────────────────
-def call_gemini(prompt: str) -> str:
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.7, "topP": 0.9, "topK": 40},
-    }
-    r = requests.post(url, json=payload, timeout=30)
-    r.raise_for_status()
-    response = r.json()
-    raw_text = response["candidates"][0]["content"]["parts"][0]["text"]
-    logger.debug("Raw Gemini response:\n%s", raw_text)
-    return raw_text
-
-# ─── Extractor ──────────────────────────────────────────────────────────
-def parse_report(js: str) -> dict:
-    match = re.search(r"const reportData\s*=\s*({.*?});?", js, re.DOTALL)
-    if not match:
-        raise ValueError("reportData object not found in response")
-    obj_str = match.group(1)
-    return json5.loads(obj_str)
-
-# ─── Routes ─────────────────────────────────────────────────────────────
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({"status": "running", "service": "createlo‐audit"}), 200
-
-@app.route("/submit", methods=["OPTIONS", "POST"])
-def submit():
-    if request.method == "OPTIONS":
-        return jsonify({}), 204
-
-    if not request.is_json:
-        return jsonify(error="Request must be JSON"), 400
-    data = request.get_json()
-    logger.info("→ Received: %s", data)
-
-    required = ["website", "email", "contactNumber"]
-    missing = [f for f in required if not data.get(f)]
-    if missing:
-        return jsonify(error="Missing fields", missing=missing), 400
-
-    if not is_valid_url(data["website"]):
-        return jsonify(error="Invalid website URL"), 400
-
-    if not GEMINI_API_KEY:
-        return jsonify(error="Service unavailable"), 503
-
-    prompt = build_prompt(data)
+def extract_report_data(gemini_response):
     try:
-        raw = call_gemini(prompt)
-        report = parse_report(raw)
+        start = gemini_response.find("const reportData = {")
+        if start == -1:
+            logger.error("Could not find reportData in response")
+            return None
+        
+        obj_start = gemini_response.find("{", start)
+        obj_end = gemini_response.rfind("}") + 1
+        json_str = gemini_response[obj_start:obj_end]
+
+        # Ensure JSON is valid: fix trailing commas and quote keys if needed
+        report_data = json.loads(json_str)
+        
+        required_fields = [
+            'client', 'businessoverview', 'instagramSummary', 
+            'facebookSummary', 'instagramScore', 'facebookScore',
+            'overallScore', 'businesssummary', 'insights', 'tips'
+        ]
+        for field in required_fields:
+            if field not in report_data:
+                logger.error(f"Missing required field in report: {field}")
+                return None
+                
+        return report_data
+        
     except Exception as e:
-        logger.exception("Gemini failure")
-        return jsonify(error="Audit generation failed", detail=str(e)), 502
+        logger.error(f"Error extracting report data: {str(e)}")
+        return None
 
-    session["report"] = report
-    logger.info("← Success")
-    return jsonify(status="success", data=report), 200
+def send_to_gemini(prompt):
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+        headers = {'Content-Type': 'application/json'}
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }],
+            "safetySettings": [
+                {
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "threshold": "BLOCK_ONLY_HIGH"
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.7,
+                "topP": 0.9,
+                "topK": 40
+            }
+        }
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        return response.json()['candidates'][0]['content']['parts'][0]['text']
+    except Exception as e:
+        return f"Error calling Gemini API: {str(e)}"
 
-# ─── Run Server ─────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
+def _build_cors_preflight_response():
+    origin = request.headers.get('Origin')
+    if origin not in allowed_origins:
+        return jsonify({"error": "Origin not allowed"}), 403
+    response = jsonify({"message": "CORS preflight"})
+    response.headers.add("Access-Control-Allow-Origin", origin)
+    response.headers.add("Access-Control-Allow-Headers", "*")
+    response.headers.add("Access-Control-Allow-Methods", "*")
+    response.headers.add("Access-Control-Allow-Credentials", "true")
+    return response
+
+def _corsify_actual_response(response):
+    origin = request.headers.get('Origin')
+    if origin in allowed_origins:
+        response.headers.add("Access-Control-Allow-Origin", origin)
+        response.headers.add("Access-Control-Allow-Credentials", "true")
+    return response
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=os.environ.get('DEBUG', 'False') == 'True')
