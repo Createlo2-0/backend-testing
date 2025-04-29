@@ -15,22 +15,29 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # App configuration
-app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))  # Changed to use random secret if not in env
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
 app.config.update(
     SESSION_COOKIE_NAME='createlo_session',
-    SESSION_COOKIE_SECURE=True,  # Important for production with HTTPS
+    SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE='Lax',  # Changed from 'None' for better security
+    SESSION_COOKIE_SAMESITE='Lax',
     PERMANENT_SESSION_LIFETIME=timedelta(hours=1),
     SESSION_REFRESH_EACH_REQUEST=True
 )
 
-# Open CORS configuration - allows any origin
+# CORS configuration - specific allowed origins when using credentials
+allowed_origins = [
+    "https://audit.createlo.in",
+    "http://localhost:3000",
+    "http://localhost:3000/audit-form",
+    "http://localhost:3000/business-summary"
+]
+
 CORS(app,
      supports_credentials=True,
      resources={
          r"/*": {
-             "origins": "*",  # Allow any origin
+             "origins": allowed_origins,
              "methods": ["GET", "POST", "OPTIONS"],
              "allow_headers": ["Content-Type", "Authorization"],
              "expose_headers": ["Content-Type"],
@@ -60,8 +67,18 @@ def submit():
         if not data:
             return jsonify({"error": "No data received"}), 400
 
+        # Map frontend fields to backend expected fields
+        business_url = data.get('website', '')
+        business_email = data.get('email', '')
+        business_phone = data.get('contactNumber', '')
+        business_category = data.get('businessCategory', '')
+        category_hint = data.get('categoryHint', '')
+        owner_name = data.get('ownerName', '')
+        instagram = data.get('instagram', '')
+        facebook = data.get('facebook', '')
+
         # Validate required fields
-        required_fields = ['business_url', 'business_email', 'business_phone']
+        required_fields = ['website', 'email', 'contactNumber']
         missing_fields = [field for field in required_fields if field not in data]
         if missing_fields:
             return jsonify({
@@ -70,14 +87,19 @@ def submit():
             }), 400
 
         # Validate URL format
-        if not is_valid_url(data['business_url']):
+        if not is_valid_url(business_url):
             return jsonify({"error": "Invalid business URL"}), 400
 
-        # Build the exact prompt as specified
+        # Build the prompt with all available data
         prompt = build_createlo_prompt(
-            data['business_url'],
-            data.get('business_email', ''),
-            data.get('business_phone', '')
+            business_url,
+            business_email,
+            business_phone,
+            business_category,
+            category_hint,
+            owner_name,
+            instagram,
+            facebook
         )
         
         if not GEMINI_API_KEY:
@@ -115,8 +137,22 @@ def is_valid_url(url):
     except:
         return False
 
-def build_createlo_prompt(url, email, phone):
-    """Build the exact prompt as specified in requirements"""
+def build_createlo_prompt(url, email, phone, category=None, category_hint=None, owner_name=None, instagram=None, facebook=None):
+    """Build the prompt with all available business data"""
+    additional_info = []
+    if category:
+        additional_info.append(f"Business Category: {category}")
+    if category_hint:
+        additional_info.append(f"Category Hint: {category_hint}")
+    if owner_name:
+        additional_info.append(f"Owner Name: {owner_name}")
+    if instagram:
+        additional_info.append(f"Instagram Handle: {instagram}")
+    if facebook:
+        additional_info.append(f"Facebook Page: {facebook}")
+        
+    additional_info_str = "\n".join(additional_info) + "\n" if additional_info else ""
+    
     return f"""
 You are a digital marketing audit expert working for the Createlo brand. Your goal is to analyze a business's website and provide insights and actionable next steps that highlight opportunities and encourage engagement with Createlo's services.
 
@@ -124,6 +160,7 @@ I have the following business data:
 Business URL: {url}
 Business Email: {email}
 Business Phone: {phone}
+{additional_info_str}
 
 Based *only* on analyzing the content of the Business URL provided ({url}):
 
@@ -216,15 +253,23 @@ def send_to_gemini(prompt):
         return f"Error calling Gemini API: {str(e)}"
 
 def _build_cors_preflight_response():
+    origin = request.headers.get('Origin')
+    if origin not in allowed_origins:
+        return jsonify({"error": "Origin not allowed"}), 403
+        
     response = jsonify({"message": "CORS preflight"})
-    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add("Access-Control-Allow-Origin", origin)
     response.headers.add("Access-Control-Allow-Headers", "*")
     response.headers.add("Access-Control-Allow-Methods", "*")
     response.headers.add("Access-Control-Allow-Credentials", "true")
     return response
 
 def _corsify_actual_response(response):
-    response.headers.add("Access-Control-Allow-Origin", "*")
+    origin = request.headers.get('Origin')
+    if origin not in allowed_origins:
+        return jsonify({"error": "Origin not allowed"}), 403
+        
+    response.headers.add("Access-Control-Allow-Origin", origin)
     response.headers.add("Access-Control-Allow-Credentials", "true")
     return response
 
