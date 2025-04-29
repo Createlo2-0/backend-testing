@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 app = Flask(__name__)
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)  # Changed to DEBUG for more detailed logs
 logger = logging.getLogger(__name__)
 
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
@@ -106,6 +106,8 @@ def submit():
 
         report_data = extract_report_data(gemini_response)
         if not report_data:
+            logger.error("Failed to extract report data from Gemini response")
+            logger.debug(f"Full Gemini response: {gemini_response}")
             return jsonify({"error": "Could not parse audit report"}), 500
 
         session['report_data'] = report_data
@@ -175,58 +177,65 @@ const reportData = {{
     "<Tip 3>"
   ]
 }};
+
+IMPORTANT: Your response must ONLY contain the JavaScript object declaration and nothing else. No additional text, explanations, or markdown formatting.
 """
 
 def extract_report_data(gemini_response):
     try:
         logger.debug("Extracting reportData from Gemini response...")
-        logger.debug(f"Raw Gemini text:\n{gemini_response}")
-
-        # Extract JavaScript-style object using more robust regex
-        match = re.search(
-            r"const reportData\s*=\s*({.*?});?\s*$", 
-            gemini_response, 
-            re.DOTALL
-        )
+        
+        # More flexible regex pattern to match the object
+        pattern = r'(?:const|let|var)\s+reportData\s*=\s*({[\s\S]*?})\s*;'
+        match = re.search(pattern, gemini_response, re.MULTILINE)
+        
         if not match:
-            logger.error("Could not find reportData object in Gemini response")
+            # Try to find just the object without declaration
+            pattern = r'{\s*["\']client["\'].*?}'
+            match = re.search(pattern, gemini_response, re.DOTALL)
+            
+        if not match:
+            logger.error("No matching object found in response")
+            logger.debug(f"Response content:\n{gemini_response}")
             return None
 
         js_object = match.group(1)
+        logger.debug(f"Extracted object string:\n{js_object}")
         
-        # More comprehensive cleaning
+        # Clean the JSON string
         js_object_clean = js_object.strip()
-        js_object_clean = re.sub(r"//.*?\n", "", js_object_clean)  # Remove JS comments
-        js_object_clean = re.sub(r"/\*.*?\*/", "", js_object_clean, flags=re.DOTALL)  # Remove block comments
-        js_object_clean = js_object_clean.replace("'", '"')  # Replace single quotes
-        js_object_clean = re.sub(r",\s*([}\]])", r"\1", js_object_clean)  # Remove trailing commas
-        js_object_clean = re.sub(r"(\w+)\s*:", r'"\1":', js_object_clean)  # Quote property names
+        js_object_clean = re.sub(r'/\*.*?\*/', '', js_object_clean, flags=re.DOTALL)  # Remove block comments
+        js_object_clean = re.sub(r'//.*?$', '', js_object_clean, flags=re.MULTILINE)  # Remove line comments
+        js_object_clean = js_object_clean.replace("'", '"')  # Standardize quotes
+        js_object_clean = re.sub(r',\s*([}\]])', r'\1', js_object_clean)  # Remove trailing commas
+        js_object_clean = re.sub(r'(\w+)\s*:', r'"\1":', js_object_clean)  # Quote property names
         
         logger.debug(f"Cleaned JSON string:\n{js_object_clean}")
 
-        # Try parsing with more helpful error reporting
         try:
             report_data = json.loads(js_object_clean)
+            
+            # Validate required fields
+            required_fields = [
+                'client', 'businessoverview', 'instagramSummary',
+                'facebookSummary', 'instagramScore', 'facebookScore',
+                'overallScore', 'businesssummary', 'insights', 'tips'
+            ]
+            
+            for field in required_fields:
+                if field not in report_data:
+                    logger.error(f"Missing required field: {field}")
+                    return None
+                    
+            return report_data
+            
         except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error at position {e.pos}: {e.msg}")
-            logger.error(f"Problematic text: {js_object_clean[max(0,e.pos-20):e.pos+20]}")
+            logger.error(f"JSON decode error: {str(e)}")
+            logger.error(f"Error at position {e.pos}: {e.doc[e.pos-20:e.pos+20]}")
             return None
-
-        required_fields = [
-            'client', 'businessoverview', 'instagramSummary',
-            'facebookSummary', 'instagramScore', 'facebookScore',
-            'overallScore', 'businesssummary', 'insights', 'tips'
-        ]
-
-        for field in required_fields:
-            if field not in report_data:
-                logger.error(f"Missing required field in report: {field}")
-                return None
-
-        return report_data
-
+            
     except Exception as e:
-        logger.error(f"Error extracting report data: {str(e)}", exc_info=True)
+        logger.error(f"Error in extract_report_data: {str(e)}", exc_info=True)
         return None
 
 def send_to_gemini(prompt):
@@ -241,24 +250,37 @@ def send_to_gemini(prompt):
             "generationConfig": {
                 "temperature": 0.7,
                 "topP": 0.9,
-                "topK": 40
+                "topK": 40,
+                "response_mime_type": "application/json"
             }
         }
 
-        logger.info("Sending prompt to Gemini API...")
-        logger.debug("Prompt:\n" + prompt)
+        logger.debug("Sending prompt to Gemini API...")
+        logger.debug(f"Prompt content:\n{prompt}")
 
         response = requests.post(url, headers=headers, json=payload, timeout=30)
-        logger.info(f"Gemini API status code: {response.status_code}")
-        logger.debug(f"Gemini API raw response: {response.text}")
-
         response.raise_for_status()
-        return response.json()['candidates'][0]['content']['parts'][0]['text']
+        
+        response_json = response.json()
+        logger.debug(f"Gemini API response: {json.dumps(response_json, indent=2)}")
+        
+        if 'candidates' not in response_json or not response_json['candidates']:
+            logger.error("No candidates in Gemini response")
+            return "Error: No response content from Gemini"
+            
+        content = response_json['candidates'][0]['content']
+        if 'parts' not in content or not content['parts']:
+            logger.error("No parts in Gemini response content")
+            return "Error: No parts in response content"
+            
+        return content['parts'][0]['text']
 
-    except Exception as e:
-        logger.error("Error during Gemini API call", exc_info=True)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request to Gemini API failed: {str(e)}")
         return f"Error calling Gemini API: {str(e)}"
-
+    except Exception as e:
+        logger.error(f"Unexpected error in send_to_gemini: {str(e)}", exc_info=True)
+        return f"Error processing Gemini response: {str(e)}"
 
 def _build_cors_preflight_response():
     origin = request.headers.get('Origin')
