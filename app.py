@@ -15,23 +15,22 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # App configuration
-app.secret_key = os.environ.get('SECRET_KEY', 'irshadali')
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))  # Changed to use random secret if not in env
 app.config.update(
     SESSION_COOKIE_NAME='createlo_session',
-    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SECURE=True,  # Important for production with HTTPS
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE='None',
+    SESSION_COOKIE_SAMESITE='Lax',  # Changed from 'None' for better security
     PERMANENT_SESSION_LIFETIME=timedelta(hours=1),
     SESSION_REFRESH_EACH_REQUEST=True
 )
 
-# Enhanced CORS configuration
+# Open CORS configuration - allows any origin
 CORS(app,
      supports_credentials=True,
      resources={
          r"/*": {
-             "origins": ["https://audit.createlo.in", "http://localhost:3000","http://localhost:3000/audit-form","http://localhost:3000/business-summary"
- ],
+             "origins": "*",  # Allow any origin
              "methods": ["GET", "POST", "OPTIONS"],
              "allow_headers": ["Content-Type", "Authorization"],
              "expose_headers": ["Content-Type"],
@@ -39,7 +38,6 @@ CORS(app,
          }
      })
 
-# API Keys
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyDLrIPX8L-dH1WWiXs7wCB_nKufkKJxGiY')
 
 @app.route('/')
@@ -52,12 +50,17 @@ def submit():
         return _build_cors_preflight_response()
     
     try:
+        # Input validation
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+            
         data = request.get_json()
         logger.info(f"Received request with data: {data}")
         
         if not data:
             return jsonify({"error": "No data received"}), 400
 
+        # Validate required fields
         required_fields = ['business_url', 'business_email', 'business_phone']
         missing_fields = [field for field in required_fields if field not in data]
         if missing_fields:
@@ -66,6 +69,10 @@ def submit():
                 "missing": missing_fields
             }), 400
 
+        # Validate URL format
+        if not is_valid_url(data['business_url']):
+            return jsonify({"error": "Invalid business URL"}), 400
+
         # Build the exact prompt as specified
         prompt = build_createlo_prompt(
             data['business_url'],
@@ -73,6 +80,9 @@ def submit():
             data.get('business_phone', '')
         )
         
+        if not GEMINI_API_KEY:
+            return jsonify({"error": "API service unavailable"}), 503
+            
         logger.info("Sending request to Gemini API")
         gemini_response = send_to_gemini(prompt)
         
@@ -96,6 +106,14 @@ def submit():
     except Exception as e:
         logger.error(f"Error in submit: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
+
+def is_valid_url(url):
+    """Validate URL format"""
+    try:
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except:
+        return False
 
 def build_createlo_prompt(url, email, phone):
     """Build the exact prompt as specified in requirements"""
@@ -199,14 +217,14 @@ def send_to_gemini(prompt):
 
 def _build_cors_preflight_response():
     response = jsonify({"message": "CORS preflight"})
-    response.headers.add("Access-Control-Allow-Origin", "https://audit.createlo.in")
+    response.headers.add("Access-Control-Allow-Origin", "*")
     response.headers.add("Access-Control-Allow-Headers", "*")
     response.headers.add("Access-Control-Allow-Methods", "*")
     response.headers.add("Access-Control-Allow-Credentials", "true")
     return response
 
 def _corsify_actual_response(response):
-    response.headers.add("Access-Control-Allow-Origin", "https://audit.createlo.in")
+    response.headers.add("Access-Control-Allow-Origin", "*")
     response.headers.add("Access-Control-Allow-Credentials", "true")
     return response
 
