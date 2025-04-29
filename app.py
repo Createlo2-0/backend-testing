@@ -227,8 +227,8 @@ def send_to_gemini(prompt):
     """Send request to Gemini API"""
     try:
        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
-        headers = {'Content-Type': 'application/json'}
-        payload = {
+       headers = {'Content-Type': 'application/json'}
+       payload = {
             "contents": [{
                 "parts": [{"text": prompt}]
             }],
