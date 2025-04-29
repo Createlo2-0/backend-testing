@@ -30,7 +30,8 @@ CORS(app,
      supports_credentials=True,
      resources={
          r"/*": {
-             "origins": ["https://audit.createlo.in", "http://localhost:3000"],
+             "origins": ["https://audit.createlo.in", "http://localhost:3000","http://localhost:3000/audit-form","http://localhost:3000/business-summary"
+ ],
              "methods": ["GET", "POST", "OPTIONS"],
              "allow_headers": ["Content-Type", "Authorization"],
              "expose_headers": ["Content-Type"],
