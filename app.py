@@ -16,19 +16,14 @@ logger = logging.getLogger(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
 app.config.update(
     SESSION_COOKIE_NAME='createlo_session',
-    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SECURE=False,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
     PERMANENT_SESSION_LIFETIME=timedelta(hours=1),
     SESSION_REFRESH_EACH_REQUEST=True
 )
 
-allowed_origins = [
-    "https://audit.createlo.in",
-    "http://localhost:3000",
-    "http://localhost:3000/audit-form",
-    "http://localhost:3000/business-summary"
-]
+allowed_origins = "*"
 
 CORS(app,
      supports_credentials=True,
