@@ -16,14 +16,19 @@ logger = logging.getLogger(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
 app.config.update(
     SESSION_COOKIE_NAME='createlo_session',
-    SESSION_COOKIE_SECURE=False,
+    SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
     PERMANENT_SESSION_LIFETIME=timedelta(hours=1),
     SESSION_REFRESH_EACH_REQUEST=True
 )
 
-allowed_origins = "*"
+allowed_origins = [
+    "https://audit.createlo.in",
+    "http://localhost:3000",
+    "http://localhost:3000/audit-form",
+    "http://localhost:3000/business-summary"
+]
 
 CORS(app,
      supports_credentials=True,
@@ -37,7 +42,7 @@ CORS(app,
          }
      })
 
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyAGOhzPBdOa0kZHcz7h3DeX9sLN3Mel7e0')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyBjeIvNr_EYX5p8K71un6iP5RAZvaH1aPE')
 
 @app.route('/')
 def home():
@@ -142,8 +147,7 @@ def build_createlo_prompt(url, email, phone, category=None, category_hint=None,
     additional_info_str = "\n".join(additional_info) + "\n" if additional_info else ""
     
     return f"""
-You are a digital marketing audit expert working for Createlo. Analyze this business website and provide a comprehensive audit.
-
+You are a digital marketing audit expert working for the Createlo brand. Your goal is to analyze a business's website and provide insights and actionable next steps that highlight opportunities and encourage engagement with Createlo's services.
 Business Data:
 - URL: {url}
 - Email: {email}
@@ -167,16 +171,16 @@ const reportData = {{
   overallScore: <average>,
   
   // Combined summary
-  businesssummary: "<2-sentence summary>",
+  businesssummary: "<10-sentence summary>",
   
-  // Marketing insights (3-5 items)
+  // Marketing insights (4-8 items)
   insights: [
     "<specific insight>",
     "<specific insight>",
     "<specific insight>"
   ],
   
-  // Actionable tips (3-5 items)
+  // Generate several practical and actionable tips derived DIRECTLY from the generated 'insights'. Each tip should identify a specific area for improvement or opportunity related to their online presence (as inferred from the website) and suggest a relevant action. FRAME these tips to naturally lead into recommending a Createlo service (like booking a call, requesting an audit/quote, starting a test campaign) as the solution or next step. Maintain a professional, encouraging, yet action-oriented toneActionable tips (3-5 items)
   tips: [
     "<specific tip mentioning Createlo service>",
     "<specific tip mentioning Createlo service>",
@@ -185,10 +189,13 @@ const reportData = {{
 }};
 
 IMPORTANT:
-1. Only return the JavaScript object
-2. Scores should be between 60-100
-3. Tips should reference Createlo services
-4. Make reasonable assumptions for missing info
+
+1. Maintain EXACT field order as shown above
+2. Only return the JavaScript object
+3. Scores should be between 60-100
+4. Tips should reference Createlo services
+5. Make reasonable assumptions for missing info
+
 """
 
 def extract_report_data(gemini_response):
@@ -266,7 +273,7 @@ def clean_json_string(js_str):
     
 
 def validate_report_data(data):
-    """Validate the extracted report data structure"""
+    """Validate the extracted report data structure and Field orders"""
     required_fields = {
         'client': str,
         'businessoverview': str,
