@@ -42,7 +42,7 @@ CORS(app,
          }
      })
 
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyAWUN_ufEWogADfjxsYq4QWcbsjUm-aO6c')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
 @app.route('/')
 def home():
